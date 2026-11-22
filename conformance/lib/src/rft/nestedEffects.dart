@@ -1,0 +1,318 @@
+// Port of rft nestedEffects.ts at 745e6eb. See LICENSE in this directory.
+import '../../adapter.dart';
+import 'fixture.dart';
+
+final nestedEffectsCases = <Fixture>[
+  /**
+   *  S(a) ─→ E_outer{ E_inner }
+   *
+   * Outer effect and inner effect both read a.
+   * Outer must execute before inner on initial run.
+   */
+  Fixture(43, "outer effect runs before inner effect", (ReactiveAdapter fw) {
+    final order = <dynamic>[];
+    final a = fw.signal<dynamic>(0);
+    fw.effect(() {
+      order.add("outer");
+      a.read();
+      fw.effect(() {
+        order.add("inner");
+        a.read();
+      });
+    });
+    expect(order[0]).toBe("outer");
+  }),
+
+  /**
+   *  S(a) ─→ E_outer{ untracked{ E_inner ─→ S(a) } }
+   *
+   * Inner effect is created inside an untracked block.
+   * Outer effect must not subscribe to a's deps via untracked.
+   * Inner effect still reads a directly and may re-run.
+   */
+  Fixture(45, "untracked inner effect does not subscribe to deps", (
+    ReactiveAdapter fw,
+  ) {
+    final a = fw.signal<dynamic>(0);
+    var outerRuns = 0;
+    var innerRuns = 0;
+    fw.effect(() {
+      outerRuns++;
+      fw.untracked(() {
+        fw.effect(() {
+          a.read();
+          innerRuns++;
+        });
+      });
+    });
+    expect(outerRuns).toBe(1);
+    expect(innerRuns).toBe(1);
+    innerRuns = 0;
+    a.write(1);
+    // The outer effect should not re-run since deps are untracked
+    // But the inner effect should re-run since it directly reads a
+    expect(outerRuns).toBe(1);
+    expect(innerRuns).toBe(1);
+  }),
+
+  /**
+   *  S(a) ─→ E(eff)   [reads a twice]
+   *
+   * Effect reads the same signal twice in one execution.
+   * Must still fire only once per change, not once per read.
+   */
+  Fixture(46, "duplicate subscribers don't cause duplicate notifications", (
+    ReactiveAdapter fw,
+  ) {
+    final a = fw.signal<dynamic>(0);
+    var runs = 0;
+    fw.effect(() {
+      a.read();
+      a.read();
+      runs++;
+    });
+    expect(runs).toBe(1);
+    a.write(1);
+    expect(runs).toBe(2);
+  }),
+
+  /**
+   *  S(a) ─→ E(eff) ──write──→ S(a)
+   *
+   * Effect writes to its own dependency on the first run.
+   * Framework must handle the recursion without infinite looping.
+   */
+  Fixture(47, "effect recursion handled on first execution", (
+    ReactiveAdapter fw,
+  ) {
+    final a = fw.signal<dynamic>(0);
+    var runs = 0;
+    fw.effect(() {
+      runs++;
+      if (jsStrictEqual(runs, 1)) {
+        a.write(1);
+      }
+      a.read();
+    });
+    // Should not infinite loop — either runs once with final value
+    // or runs twice (initial + triggered by write)
+    expect(runs).toBeLessThanOrEqual(3);
+    expect(a.read()).toBe(1);
+  }),
+
+  /**
+   *  S(a) ─→ E_parent{ S(child) ─→ E_child }
+   *                       ↑ write
+   *
+   * Parent effect creates a child signal and inner effect, then
+   * writes to the child signal. Parent must not re-trigger from
+   * the child's signal write — only from a.
+   */
+  Fixture(163, "parent effect not triggered by child's own signal", (
+    ReactiveAdapter fw,
+  ) {
+    final a = fw.signal<dynamic>(0);
+    var parentRuns = 0;
+    fw.effect(() {
+      a.read();
+      parentRuns++;
+      final childSignal = fw.signal<dynamic>(0);
+      fw.effect(() {
+        childSignal.read();
+      });
+      childSignal.write(1);
+    });
+    final runsAfterSetup = parentRuns;
+    expect(runsAfterSetup).toBeGreaterThanOrEqual(1);
+    a.write(1);
+    expect(parentRuns).toBe(runsAfterSetup + 1);
+  }),
+
+  /**
+   *  S(a) ─→ E_outer{ E_inner ─→ S(b) }
+   *
+   * Inner effect reads b (not a). When b changes, the inner
+   * effect must re-run independently of the outer effect.
+   */
+  Fixture(164, "inner autorun created inside outer tracks own deps", (
+    ReactiveAdapter fw,
+  ) {
+    final a = fw.signal<dynamic>(0);
+    final b = fw.signal<dynamic>(0);
+    var innerRuns = 0;
+    fw.effect(() {
+      a.read();
+      fw.effect(() {
+        b.read();
+        innerRuns++;
+      });
+    });
+    innerRuns = 0;
+    b.write(1);
+    expect(innerRuns).toBeGreaterThanOrEqual(1);
+  }),
+
+  /**
+   *  S(a) ─→ *C(b)  ← b = a % 2
+   *            |
+   *  E_outer{ E_inner ─→ *C(b) }
+   *
+   * a changes from 0 to 2 but b stays 0 (same parity).
+   * Inner effect must NOT re-run (value-equality cut).
+   */
+  Fixture(
+    170,
+    "inner effect not triggered when computed dep resolves unchanged",
+    (ReactiveAdapter fw) {
+      final a = fw.signal<dynamic>(0);
+      final b = fw.computed<dynamic>(() => a.read() % 2);
+      var innerRuns = 0;
+      fw.effect(() {
+        fw.effect(() {
+          b.read();
+          innerRuns++;
+        });
+      });
+      final initial = innerRuns;
+      expect(initial).toBe(1);
+      a.write(2);
+      expect(innerRuns).toBe(initial);
+      a.write(3);
+      expect(innerRuns).toBeGreaterThan(initial);
+    },
+  ),
+
+  /**
+   *  S(a) ─→ E_outer{ val=a.read(); E_inner{ observe(val) } }
+   *
+   * Inner effect captures a closure variable from the outer effect.
+   * The observed value must reflect the outer's current execution.
+   */
+  Fixture(48, "nested effects depend on state of outer effects", (
+    ReactiveAdapter fw,
+  ) {
+    final a = fw.signal<dynamic>(0);
+    final observed = <dynamic>[];
+    fw.effect(() {
+      final val = a.read();
+      fw.effect(() {
+        observed.add(val);
+      });
+    });
+    expect(observed).toContain(0);
+  }),
+
+  /**
+   *  S(a) ─→ E_outer{ E_inner ─→ S(b) }
+   *
+   * Outer reads a and creates an inner effect that reads b.
+   * After b changes (which re-runs only the inner), the outer
+   * must still respond to subsequent writes to its own dep a.
+   *
+   * Regression observed in alien-signals 3.2.0 (works in 3.1.2):
+   * after the inner re-runs once on its own, the outer's link
+   * to a is dropped and a.write no longer triggers it.
+   * See https://github.com/stackblitz/alien-signals/issues/115
+   */
+  Fixture(226, "outer keeps responding to own deps after inner re-runs", (
+    ReactiveAdapter fw,
+  ) {
+    final a = fw.signal<dynamic>(0);
+    final b = fw.signal<dynamic>(0);
+    var outerRuns = 0;
+    var innerRuns = 0;
+    fw.effect(() {
+      a.read();
+      outerRuns++;
+      fw.effect(() {
+        b.read();
+        innerRuns++;
+      });
+    });
+    expect(outerRuns).toBe(1);
+    expect(innerRuns).toBe(1);
+    // Trigger inner via b — outer must NOT re-run (b is not its dep)
+    b.write(1);
+    expect(outerRuns).toBe(1);
+    expect(innerRuns).toBeGreaterThanOrEqual(2);
+    // Trigger outer via a — must re-run despite inner having re-run earlier
+    a.write(1);
+    expect(outerRuns).toBe(2);
+  }),
+
+  /**
+   *  S(a) ─→ E_outer{ E_inner1 ─→ S(b1),  E_inner2 ─→ S(b2) }
+   *
+   * Outer creates two sibling inner effects. After only one of them
+   * re-runs (via its own dep), the outer must still respond to a.
+   * Same parent-child link integrity property as #226, but with
+   * sibling inners — could expose bugs where one inner's re-run
+   * corrupts the other or the parent's link.
+   */
+  Fixture(227, "outer responds after one of multiple sibling inners re-runs", (
+    ReactiveAdapter fw,
+  ) {
+    final a = fw.signal<dynamic>(0);
+    final b1 = fw.signal<dynamic>(0);
+    final b2 = fw.signal<dynamic>(0);
+    var outerRuns = 0;
+    var inner1Runs = 0;
+    var inner2Runs = 0;
+    fw.effect(() {
+      a.read();
+      outerRuns++;
+      fw.effect(() {
+        b1.read();
+        inner1Runs++;
+      });
+      fw.effect(() {
+        b2.read();
+        inner2Runs++;
+      });
+    });
+    expect(outerRuns).toBe(1);
+    expect(inner1Runs).toBe(1);
+    expect(inner2Runs).toBe(1);
+    // Only inner1 re-runs
+    b1.write(1);
+    expect(outerRuns).toBe(1);
+    expect(inner1Runs).toBeGreaterThanOrEqual(2);
+    // Outer must still respond to its own dep
+    a.write(1);
+    expect(outerRuns).toBe(2);
+  }),
+
+  /**
+   *  S(a) ─→ E_outer{ E_inner ─→ S(b) }
+   *  b.write × 3
+   *
+   * Inner re-runs multiple times via successive writes to b. After
+   * the burst, the outer must still respond to a. Verifies the
+   * parent-child link survives repeated inner re-runs, not just one.
+   */
+  Fixture(228, "outer responds after inner re-runs multiple times", (
+    ReactiveAdapter fw,
+  ) {
+    final a = fw.signal<dynamic>(0);
+    final b = fw.signal<dynamic>(0);
+    var outerRuns = 0;
+    var innerRuns = 0;
+    fw.effect(() {
+      a.read();
+      outerRuns++;
+      fw.effect(() {
+        b.read();
+        innerRuns++;
+      });
+    });
+    expect(outerRuns).toBe(1);
+    expect(innerRuns).toBe(1);
+    b.write(1);
+    b.write(2);
+    b.write(3);
+    expect(outerRuns).toBe(1);
+    expect(innerRuns).toBeGreaterThanOrEqual(2);
+    a.write(1);
+    expect(outerRuns).toBe(2);
+  }),
+];

@@ -1,0 +1,11 @@
+name: baseline_signals
+publish_to: none
+environment:
+  sdk: ^3.14.0
+dependencies:
+  flutter:
+    sdk: flutter
+  signals_flutter: 7.1.0
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

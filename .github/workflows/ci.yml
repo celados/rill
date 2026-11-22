@@ -1,0 +1,57 @@
+name: CI
+
+# The gate CI runs is tool/check.sh --no-bench, split across jobs:
+# `check` runs the static checks and every package's tests
+# (tool/check.sh --no-mutate), and `mutate` runs every mutant in shards
+# (tool/mutate.dart --shard). The shards together run each mutant once.
+#
+# Every job runs on GitHub-hosted runners (4 vCPU for public repositories):
+# each shard runs two mutants at a time, one workspace per job.
+#
+# Follows upstream: every run installs the latest Flutter stable instead of a
+# pinned version, so the weekly run catches SDK and analyzer drift.
+# Benchmarks stay local (tool/check.sh without flags): shared runners are
+# too noisy for the perf gate (docs/bench.md).
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter --version
+      - run: tool/check.sh --no-mutate
+
+  mutate:
+    name: mutate (${{ matrix.shard }}/4)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+      - run: dart run tool/mutate.dart --shard ${{ matrix.shard }}/4 --jobs 2

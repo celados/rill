@@ -1,0 +1,4 @@
+tags:
+  # Spawns VMs and compiles executables. tool/mutate.dart excludes it.
+  process:
+    timeout: 4x

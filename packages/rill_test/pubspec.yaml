@@ -1,0 +1,15 @@
+name: rill_test
+version: 0.7.3
+publish_to: none
+environment:
+  sdk: ^3.14.0
+resolution: workspace
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_test:
+    sdk: flutter
+  rill:
+    path: ../rill
+  rill_flutter:
+    path: ../rill_flutter

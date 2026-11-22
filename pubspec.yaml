@@ -1,0 +1,12 @@
+name: rill_workspace
+publish_to: none
+environment:
+  sdk: ^3.14.0
+workspace:
+  - packages/rill
+  - packages/rill_flutter
+  - packages/rill_test
+  - packages/rill_lint
+  - conformance
+  - bench
+  - examples/feed_store

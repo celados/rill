@@ -1,0 +1,11 @@
+name: rill_lint_canary
+publish_to: none
+environment:
+  sdk: ^3.14.0
+dependencies:
+  flutter:
+    sdk: flutter
+  rill:
+    path: ../../rill
+  rill_flutter:
+    path: ../../rill_flutter

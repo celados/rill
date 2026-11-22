@@ -1,0 +1,10 @@
+plugins:
+  rill_lint:
+    path: ../../packages/rill_lint
+    diagnostics:
+      rill_cast_to_signal: error
+      rill_write_in_computed: error
+      rill_write_in_build: error
+      rill_create_in_build: error
+      rill_untracked_read: error
+      rill_write_after_await: error

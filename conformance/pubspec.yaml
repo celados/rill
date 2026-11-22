@@ -1,0 +1,12 @@
+name: rill_conformance
+publish_to: none
+environment:
+  sdk: ^3.14.0
+resolution: workspace
+dependencies:
+  alien_signals: ^2.4.0
+  rill:
+    path: ../packages/rill
+  signals_core: ^7.0.0
+dev_dependencies:
+  test: ^1.32.0

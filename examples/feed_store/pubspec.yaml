@@ -1,0 +1,10 @@
+name: feed_store
+publish_to: none
+environment:
+  sdk: ^3.14.0
+resolution: workspace
+dependencies:
+  rill:
+    path: ../../packages/rill
+dev_dependencies:
+  test: ^1.32.0

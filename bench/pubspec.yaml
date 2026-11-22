@@ -1,0 +1,11 @@
+name: rill_bench
+publish_to: none
+environment:
+  sdk: ^3.14.0
+resolution: workspace
+dependencies:
+  rill_conformance:
+    path: ../conformance
+  signals_core: ^7.0.0
+dev_dependencies:
+  test: ^1.32.0
