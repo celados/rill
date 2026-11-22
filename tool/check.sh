@@ -96,11 +96,15 @@ rm -rf "$logs"
 mkdir -p "$logs"
 names=() pids=()
 log() { printf '%s/%s.log' "$logs" "${1//\//-}"; }
+# Each task gets its own analyzer state: concurrent analysis servers sharing
+# one ~/.dartServer cache crash with SIGBUS when one truncates a file another
+# has mapped (seen on CI). The state stays under .dart_tool to keep it warm.
 task() {
   local name=$1 start=$SECONDS
   shift
   {
     local status=0
+    export ANALYZER_STATE_LOCATION_OVERRIDE=$PWD/.dart_tool/analyzer-state/${name//\//-}
     ("$@") || status=$?
     printf '%s\n' "$(( SECONDS - start ))" > "$(log "$name").time"
     exit "$status"
