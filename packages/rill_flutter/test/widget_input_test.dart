@@ -617,5 +617,77 @@ void main() {
         throwsA(_escaped('after its owner was disposed')),
       );
     });
+
+    testWidgets('readable_input_tracks_source_swap_and_value', (t) async {
+      final first = signal(1, name: 'first');
+      final second = signal(1, name: 'second');
+      final log = <(int, int?)>[];
+      await t.pumpWidget(page(_ReadableOwner(source: first, log: log)));
+      expect(find.text('1'), findsOne);
+      expect(log, [(1, null)]);
+
+      // Swapping to another Readable with the same value does not re-apply,
+      // and detaches the old source so later writes to it are ignored.
+      await t.pumpWidget(page(_ReadableOwner(source: second, log: log)));
+      expect(t.takeException(), isNull);
+      expect(find.text('1'), findsOne);
+      expect(log, [(1, null)]);
+
+      first.value = 99;
+      await t.pump();
+      expect(find.text('1'), findsOne);
+      expect(log, [(1, null)]);
+
+      // Writes to the new source update both computed and watch with
+      // continuous `previous`.
+      second.value = 2;
+      await t.pump();
+      expect(find.text('2'), findsOne);
+      expect(log, [(1, null), (2, 1)]);
+
+      // Swapping to a Readable with a different value updates in the same
+      // frame and applies after the frame with continuous `previous`.
+      await t.pumpWidget(
+        page(_ReadableOwner(source: Readable.constant(5), log: log)),
+      );
+      expect(t.takeException(), isNull);
+      expect(find.text('5'), findsOne);
+      expect(log, [(1, null), (2, 1), (5, 2)]);
+      expect(t.binding.hasScheduledFrame, isFalse);
+    });
   });
+}
+
+class _ReadableOwner extends StatefulWidget {
+  const _ReadableOwner({required this.source, required this.log});
+  final Readable<int> source;
+  final List<(int, int?)> log;
+
+  @override
+  State<_ReadableOwner> createState() => _ReadableOwnerState();
+}
+
+class _ReadableOwnerState extends State<_ReadableOwner>
+    with ReactiveState<_ReadableOwner> {
+  late final _source = input(widget.source, name: 'source');
+  late final _value = computed(() => _source.readable.value.value);
+  late final _shown = computed(() => '${_value.value}');
+
+  @override
+  void initState() {
+    super.initState();
+    watch(() => _value.value, (value, previous, _) {
+      widget.log.add((value, previous));
+    });
+  }
+
+  @override
+  void didUpdateWidget(_ReadableOwner oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _source.sync(widget.source);
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      Reactive(builder: (_) => Text(_shown.value));
 }

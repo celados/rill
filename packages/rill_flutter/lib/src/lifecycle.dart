@@ -18,20 +18,44 @@ part of '../rill_flutter.dart';
 /// silently lose to rill's inside the State.
 ///
 /// ```dart
-/// class _RegionState extends State<Region> with ReactiveState {
+/// class _RegionState extends State<Region> with ReactiveState<Region> {
+///   late final _toasts = input(widget.toasts);
+///
 ///   @override
 ///   void initState() {
 ///     super.initState();
-///     watch(() => widget.toasts.value, (toasts, previous, onCleanup) {
+///     watch(() => _toasts.readable.value.value, (toasts, previous, onCleanup) {
 ///       _entries.value = _reconcile(toasts);   // after the first frame
 ///     });
+///   }
+///
+///   @override
+///   void didUpdateWidget(Region oldWidget) {
+///     super.didUpdateWidget(oldWidget);
+///     _toasts.sync(widget.toasts);
 ///   }
 /// }
 /// ```
 ///
-/// To follow a widget input that the parent can swap, stop the watch and
-/// create it again in `didUpdateWidget`; the new one starts over, with its
-/// first apply after the frame and `previous == null`.
+/// Two ways to handle a widget input that the parent can swap on rebuild:
+///
+/// - **Follow the value** (a `Readable` prop): hold it in a
+///   `WidgetInput<Readable<T>>`, `sync` it in `didUpdateWidget`, and read
+///   `readable.value.value` (untracked snapshot: `readable.peek().peek()`).
+///   Both `watch` and `computed` follow the swap and `previous` stays
+///   continuous; wrap in a `computed` if swapping to another source with the
+///   same value should not re-apply.
+/// - **Rebind by identity** (a replaced controller whose reactions should
+///   start fresh): stop the old watches and create new ones in
+///   `didUpdateWidget`; the new ones start over with a post-frame first apply
+///   and `previous == null`.
+///
+/// You do not need to manually stop watches before `super.dispose()`: no
+/// synchronous apply runs between your `dispose` body and `super.dispose()`.
+/// To tear down external resources (such as animations) in strict reverse order
+/// with watches, register `scope.onDispose(resource.dispose)` before creating
+/// the watches that use them, and list `ReactiveState` after
+/// `TickerProviderStateMixin` so `scope` disposes before the ticker check.
 mixin ReactiveState<W extends StatefulWidget> on State<W> {
   Scope? _lifetime;
   bool _ending = false;
@@ -54,6 +78,8 @@ mixin ReactiveState<W extends StatefulWidget> on State<W> {
   /// after the frame (with `previous == null`), later ones synchronously.
   /// Until the first apply, recomputes only replace the value it will see.
   /// The returned function stops it early; [dispose] stops it anyway.
+  /// Stopping is final: no further [apply] runs after stop, including a
+  /// pending first post-frame apply (registered cleanups run as usual).
   @protected
   void Function() watch<T>(
     T Function() compute,

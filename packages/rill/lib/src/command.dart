@@ -33,6 +33,17 @@ final class Skipped<T> extends Outcome<T> {
 
 final _taskZone = Object();
 
+/// How a [Slot] handles a [Slot.run] call while another run is in flight.
+///
+/// - [supersede]: invalidates in-flight runs (`Stale(StaleReason.superseded)`,
+///   completing their `Task.cancelled`) and starts the new run immediately.
+/// - [skip]: returns [Skipped] without running the body — "the in-flight run
+///   counts as yours" (e.g. form submit deduplication).
+/// - [queue]: serializes runs in call order. When a periodic poll shares a
+///   slot with a forced refresh that needs a read started *after* its call,
+///   use [queue]: the periodic entry drops itself when `slot.busy.peek()` is
+///   true, and the forced refresh submits an unkeyed run unconditionally.
+/// - [parallel]: runs concurrently and aggregates [Slot.busy].
 enum OnBusy { supersede, skip, queue, parallel }
 
 final class Slot {

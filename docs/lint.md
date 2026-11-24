@@ -103,13 +103,21 @@ Future<void> start() async {
 用相位判断（`schedulerPhase == idle`）绕开是错的：runApp 的首次 build 同步发生在帧外，相位恰好是 idle。
 
 ```dart
-class _RegionState extends State<Region> with ReactiveState {
+class _RegionState extends State<Region> with ReactiveState<Region> {
+  late final _toasts = input(widget.toasts);
+
   @override
   void initState() {
     super.initState();
-    watch(() => widget.toasts.value, (toasts, previous, _) {   // 首个 apply 在帧后，之后同步
+    watch(() => _toasts.readable.value.value, (toasts, previous, _) {   // 首个 apply 在帧后，之后同步
       entries.value = reconcile(toasts);
     });
+  }
+
+  @override
+  void didUpdateWidget(Region oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _toasts.sync(widget.toasts);
   }
 }
 ```
