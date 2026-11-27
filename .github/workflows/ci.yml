@@ -5,8 +5,9 @@ name: CI
 # (tool/check.sh --no-mutate), and `mutate` runs every mutant in shards
 # (tool/mutate.dart --shard). The shards together run each mutant once.
 #
-# Every job runs on GitHub-hosted runners (4 vCPU for public repositories):
-# each shard runs two mutants at a time, one workspace per job.
+# Pushes, schedules and dispatches run on the celados-linux self-hosted pool;
+# fork PRs run untrusted code and stay on GitHub-hosted runners. Each shard
+# runs two mutants at a time, one workspace per job.
 #
 # Follows upstream: every run installs the latest Flutter stable instead of a
 # pinned version, so the weekly run catches SDK and analyzer drift.
@@ -28,16 +29,55 @@ concurrency:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'celados-linux' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # flutter-action's own `cache: true` saves in a post-job step, and on the
+      # self-hosted pool an upload through its proxy can stall until the job
+      # times out (a post step takes no timeout). So: resolve paths and keys
+      # (dry run), restore, install, and save as ordinary steps with a timeout.
+      # The SDK goes under runner.temp, per job: the default tool-cache path is
+      # shared by every pod on the pool, and concurrent jobs would extract
+      # into it at once.
+      - id: flutter-paths
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache-path: "${{ runner.temp }}/flutter/:channel:-:version:-:arch:"
+          dry-run: true
+      - id: flutter-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.flutter-paths.outputs.CACHE-PATH }}
+          key: ${{ steps.flutter-paths.outputs.CACHE-KEY }}
+      - id: pub-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.flutter-paths.outputs.PUB-CACHE-PATH }}
+          key: ${{ steps.flutter-paths.outputs.PUB-CACHE-KEY }}-${{ hashFiles('**/pubspec.lock') }}
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          cache: true
+          cache-path: "${{ runner.temp }}/flutter/:channel:-:version:-:arch:"
       - run: flutter --version
       - run: tool/check.sh --no-mutate
+      - name: Save Flutter SDK cache
+        if: steps.flutter-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        timeout-minutes: 5
+        continue-on-error: true
+        with:
+          path: ${{ steps.flutter-paths.outputs.CACHE-PATH }}
+          key: ${{ steps.flutter-paths.outputs.CACHE-KEY }}
+      - name: Save pub cache
+        if: steps.pub-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        timeout-minutes: 5
+        continue-on-error: true
+        with:
+          path: ${{ steps.flutter-paths.outputs.PUB-CACHE-PATH }}
+          key: ${{ steps.flutter-paths.outputs.PUB-CACHE-KEY }}-${{ hashFiles('**/pubspec.lock') }}
 
   mutate:
     name: mutate (${{ matrix.shard }}/4)
@@ -45,13 +85,56 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'celados-linux' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # flutter-action's own `cache: true` saves in a post-job step, and on the
+      # self-hosted pool an upload through its proxy can stall until the job
+      # times out (a post step takes no timeout). So: resolve paths and keys
+      # (dry run), restore, install, and save as ordinary steps with a timeout.
+      # The SDK goes under runner.temp, per job: the default tool-cache path is
+      # shared by every pod on the pool, and concurrent jobs would extract
+      # into it at once.
+      - id: flutter-paths
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache-path: "${{ runner.temp }}/flutter/:channel:-:version:-:arch:"
+          dry-run: true
+      - id: flutter-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.flutter-paths.outputs.CACHE-PATH }}
+          key: ${{ steps.flutter-paths.outputs.CACHE-KEY }}
+      - id: pub-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.flutter-paths.outputs.PUB-CACHE-PATH }}
+          key: ${{ steps.flutter-paths.outputs.PUB-CACHE-KEY }}-${{ hashFiles('**/pubspec.lock') }}
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          cache: true
+          cache-path: "${{ runner.temp }}/flutter/:channel:-:version:-:arch:"
       - run: flutter pub get --enforce-lockfile
       - run: dart run tool/mutate.dart --shard ${{ matrix.shard }}/4 --jobs 2
+        env:
+          # A pod sees all of the shared host's cores; run as many suites at
+          # once as a 4 vCPU GitHub-hosted runner did.
+          RILL_TEST_CONCURRENCY: "4"
+      - name: Save Flutter SDK cache
+        if: steps.flutter-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        timeout-minutes: 5
+        continue-on-error: true
+        with:
+          path: ${{ steps.flutter-paths.outputs.CACHE-PATH }}
+          key: ${{ steps.flutter-paths.outputs.CACHE-KEY }}
+      - name: Save pub cache
+        if: steps.pub-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        timeout-minutes: 5
+        continue-on-error: true
+        with:
+          path: ${{ steps.flutter-paths.outputs.PUB-CACHE-PATH }}
+          key: ${{ steps.flutter-paths.outputs.PUB-CACHE-KEY }}-${{ hashFiles('**/pubspec.lock') }}

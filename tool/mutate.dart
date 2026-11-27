@@ -1631,10 +1631,15 @@ class _Workspace {
     return workspace;
   }
 
-  Future<ProcessResult> coreTests() => _dart(core, const [
+  Future<ProcessResult> coreTests() => _dart(core, [
     'test',
     '--reporter',
     'json',
+    // `dart test` runs one suite per core it sees. In a container that is
+    // the host's count, not the CPU the job is guaranteed, so CI caps it to
+    // keep the 5 s timeout below from firing on a busy shared host.
+    if (Platform.environment['RILL_TEST_CONCURRENCY'] case final n?)
+      '--concurrency=$n',
     '--exclude-tags',
     'process',
     // A mutant that hangs a wait would otherwise sit out the default 30 s
