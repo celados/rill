@@ -62,3 +62,7 @@ jobs:
           cache-path: "${{ runner.temp }}/flutter/:channel:-:version:-:arch:"
       - run: flutter pub get --enforce-lockfile
       - run: dart run tool/mutate.dart --shard ${{ matrix.shard }}/4 --jobs 2
+        env:
+          # A pod sees all of the shared host's cores; run as many suites at
+          # once as a 4 vCPU GitHub-hosted runner did.
+          RILL_TEST_CONCURRENCY: "4"
